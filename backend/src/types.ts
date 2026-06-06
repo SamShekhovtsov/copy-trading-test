@@ -25,6 +25,7 @@ export interface FollowerAccount {
 
 export interface CopiedOrder {
   followerId: string;
+  followerName: string;
   leaderTradeId: string;
   symbol: SymbolCode;
   side: Side;
@@ -34,4 +35,11 @@ export interface CopiedOrder {
   marginRequired: number;
   status: 'ACCEPTED' | 'REJECTED';
   rejectionReason?: string;
+}
+
+export interface CopySimulationSummary {
+  acceptedCount: number;
+  rejectedCount: number;
+  totalAcceptedNotional: number;
+  totalMarginRequired: number;
 }

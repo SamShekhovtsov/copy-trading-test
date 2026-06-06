@@ -1,4 +1,4 @@
-import { CopiedOrder, FollowerAccount, LeaderTrade } from './types.js';
+import { CopiedOrder, CopySimulationSummary, FollowerAccount, LeaderTrade } from './types.js';
 
 const SYMBOL_STEP_SIZE: Record<string, number> = {
   BTCUSDT: 0.001,
@@ -12,7 +12,8 @@ export function applySlippage(price: number, side: LeaderTrade['side'], slippage
 }
 
 export function roundDownToStep(quantity: number, stepSize: number): number {
-  return Math.floor(quantity / stepSize) * stepSize;
+  const stepDecimals = (stepSize.toString().split('.')[1] ?? '').length;
+  return Number((Math.floor(quantity / stepSize) * stepSize).toFixed(stepDecimals));
 }
 
 /**
@@ -42,27 +43,68 @@ export function buildCopiedOrder(
   const marginRequired = Number((notional / trade.leverage).toFixed(2));
 
   if (!follower.allowedSymbols.includes(trade.symbol)) {
-    return reject(trade, follower, quantity, estimatedFillPrice, notional, marginRequired, 'Symbol is not enabled for follower');
+    return reject(
+      trade,
+      follower,
+      quantity,
+      estimatedFillPrice,
+      notional,
+      marginRequired,
+      `Symbol ${trade.symbol} is not enabled for ${follower.name}`
+    );
   }
 
   if (trade.leverage > follower.maxLeverage) {
-    return reject(trade, follower, quantity, estimatedFillPrice, notional, marginRequired, 'Leader leverage exceeds follower risk limit');
+    return reject(
+      trade,
+      follower,
+      quantity,
+      estimatedFillPrice,
+      notional,
+      marginRequired,
+      `Leader leverage ${trade.leverage}x exceeds ${follower.name}'s ${follower.maxLeverage}x limit`
+    );
   }
 
   if (quantity <= 0) {
-    return reject(trade, follower, quantity, estimatedFillPrice, notional, marginRequired, 'Quantity is below exchange minimum step');
+    return reject(
+      trade,
+      follower,
+      quantity,
+      estimatedFillPrice,
+      notional,
+      marginRequired,
+      `Copied quantity ${rawQuantity} rounds below the ${trade.symbol} step size`
+    );
   }
 
   if (notional > follower.maxNotionalPerTrade) {
-    return reject(trade, follower, quantity, estimatedFillPrice, notional, marginRequired, 'Trade notional exceeds follower limit');
+    return reject(
+      trade,
+      follower,
+      quantity,
+      estimatedFillPrice,
+      notional,
+      marginRequired,
+      `Notional $${notional.toLocaleString()} exceeds ${follower.name}'s $${follower.maxNotionalPerTrade.toLocaleString()} trade limit`
+    );
   }
 
   if (marginRequired > follower.availableBalance) {
-    return reject(trade, follower, quantity, estimatedFillPrice, notional, marginRequired, 'Insufficient available margin');
+    return reject(
+      trade,
+      follower,
+      quantity,
+      estimatedFillPrice,
+      notional,
+      marginRequired,
+      `Margin $${marginRequired.toLocaleString()} exceeds ${follower.name}'s $${follower.availableBalance.toLocaleString()} available balance`
+    );
   }
 
   return {
     followerId: follower.id,
+    followerName: follower.name,
     leaderTradeId: trade.id,
     symbol: trade.symbol,
     side: trade.side,
@@ -85,6 +127,7 @@ function reject(
 ): CopiedOrder {
   return {
     followerId: follower.id,
+    followerName: follower.name,
     leaderTradeId: trade.id,
     symbol: trade.symbol,
     side: trade.side,
@@ -99,4 +142,28 @@ function reject(
 
 export function buildOrdersForTrade(trade: LeaderTrade, followers: FollowerAccount[]): CopiedOrder[] {
   return followers.map((follower) => buildCopiedOrder(trade, follower));
+}
+
+export function summarizeOrders(orders: CopiedOrder[]): CopySimulationSummary {
+  return orders.reduce<CopySimulationSummary>(
+    (summary, order) => {
+      if (order.status === 'ACCEPTED') {
+        summary.acceptedCount += 1;
+        summary.totalAcceptedNotional += order.notional;
+        summary.totalMarginRequired += order.marginRequired;
+      } else {
+        summary.rejectedCount += 1;
+      }
+
+      summary.totalAcceptedNotional = Number(summary.totalAcceptedNotional.toFixed(2));
+      summary.totalMarginRequired = Number(summary.totalMarginRequired.toFixed(2));
+      return summary;
+    },
+    {
+      acceptedCount: 0,
+      rejectedCount: 0,
+      totalAcceptedNotional: 0,
+      totalMarginRequired: 0
+    }
+  );
 }
